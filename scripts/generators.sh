@@ -1,0 +1,717 @@
+#!/bin/bash
+
+generate_dbcontext() {
+  echo ""
+  echo "📝 Criando AppDbContext..."
+
+  # Criar pasta Models no Domain com classe placeholder
+  mkdir -p src/Domain/Models
+
+  cat <<EOF > src/Domain/Models/.gitkeep
+EOF
+
+  cat <<EOF > src/Infrastructure/AppDbContext.cs
+using Microsoft.EntityFrameworkCore;
+
+namespace $PROJECT_NAME.Infrastructure
+{
+    public class AppDbContext : DbContext
+    {
+        public AppDbContext(DbContextOptions<AppDbContext> options) : base(options)
+        {
+        }
+
+        // DbSets
+        // TODO: Adicionar seus DbSets aqui
+        // public DbSet<YourEntity> YourEntities { get; set; }
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            base.OnModelCreating(modelBuilder);
+            
+            // TODO: Configurar suas entidades aqui
+        }
+    }
+}
+EOF
+}
+
+generate_repository_base() {
+  echo ""
+  echo "📝 Criando IRepositoryBase..."
+
+  mkdir -p src/Application/Repositories
+
+  cat <<EOF > src/Application/Repositories/IRepositoryBase.cs
+namespace $PROJECT_NAME.Application.Repositories
+{
+    public interface IRepositoryBase<T> where T : class
+    {
+        Task<T> GetByIdAsync(int id);
+        Task<IEnumerable<T>> GetAllAsync();
+        Task<bool> ExistsAsync(int id);
+        Task AddAsync(T entity);
+        Task UpdateAsync(T entity);
+        Task DeleteAsync(T entity);
+        Task SaveChangesAsync();
+    }
+}
+EOF
+}
+
+generate_dockerfile() {
+  if [ "$DOCKER" == "yes" ]; then
+    echo "🐳 Criando Dockerfile..."
+
+    cat <<EOF > src/WebApi/Dockerfile
+FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS base
+WORKDIR /app
+EXPOSE 80
+
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+WORKDIR /src
+COPY . .
+RUN dotnet publish -c Release -o /app/publish
+
+FROM base AS final
+WORKDIR /app
+COPY --from=build /app/publish .
+ENTRYPOINT ["dotnet", "$PROJECT_NAME.WebApi.dll"]
+EOF
+  fi
+}
+
+generate_cqrs() {
+  if [ "$CQRS" == "yes" ]; then
+    echo "🏗️ Criando estrutura CQRS..."
+
+    mkdir -p src/Application/Abstractions/Messaging
+    mkdir -p src/Application/Common
+    mkdir -p src/Application/Features/SampleFeature
+
+    # ICommand.cs
+    cat <<EOF > src/Application/Abstractions/Messaging/ICommand.cs
+using MediatR;
+using $PROJECT_NAME.Application.Common;
+
+namespace $PROJECT_NAME.Application.Abstractions.Messaging
+{
+    public interface ICommand : IRequest<Result>
+    {
+    }
+
+    public interface ICommand<TResponse> : IRequest<Result<TResponse>>
+    {
+    }
+}
+EOF
+
+    # IQuery.cs
+    cat <<EOF > src/Application/Abstractions/Messaging/IQuery.cs
+using MediatR;
+using $PROJECT_NAME.Application.Common;
+
+namespace $PROJECT_NAME.Application.Abstractions.Messaging
+{
+    public interface IQuery<TResponse> : IRequest<Result<TResponse>>
+    {
+    }
+}
+EOF
+
+    # ICommandHandler.cs
+    cat <<EOF > src/Application/Abstractions/Messaging/ICommandHandler.cs
+using MediatR;
+using $PROJECT_NAME.Application.Common;
+
+namespace $PROJECT_NAME.Application.Abstractions.Messaging
+{
+    public interface ICommandHandler<TCommand> : IRequestHandler<TCommand, Result>
+        where TCommand : ICommand
+    {
+    }
+
+    public interface ICommandHandler<TCommand, TResponse> : IRequestHandler<TCommand, Result<TResponse>>
+        where TCommand : ICommand<TResponse>
+    {
+    }
+}
+EOF
+
+    # IQueryHandler.cs
+    cat <<EOF > src/Application/Abstractions/Messaging/IQueryHandler.cs
+using MediatR;
+using $PROJECT_NAME.Application.Common;
+
+namespace $PROJECT_NAME.Application.Abstractions.Messaging
+{
+    public interface IQueryHandler<TQuery, TResponse> : IRequestHandler<TQuery, Result<TResponse>>
+        where TQuery : IQuery<TResponse>
+    {
+    }
+}
+EOF
+
+    # Result.cs
+    cat <<EOF > src/Application/Common/Result.cs
+namespace $PROJECT_NAME.Application.Common
+{
+    public class Result
+    {
+        public bool IsSuccess { get; }
+        public bool IsFailure => !IsSuccess;
+        public string Error { get; }
+
+        protected Result(bool isSuccess, string error)
+        {
+            if (isSuccess && error != string.Empty)
+                throw new InvalidOperationException();
+            if (!isSuccess && error == string.Empty)
+                throw new InvalidOperationException();
+
+            IsSuccess = isSuccess;
+            Error = error;
+        }
+
+        public static Result Success() => new(true, string.Empty);
+        public static Result Failure(string error) => new(false, error);
+    }
+
+    public class Result<TValue> : Result
+    {
+        public TValue? Value { get; }
+
+        protected internal Result(TValue? value, bool isSuccess, string error)
+            : base(isSuccess, error)
+        {
+            Value = value;
+        }
+
+        public static Result<TValue> Success(TValue value) => new(value, true, string.Empty);
+        public static new Result<TValue> Failure(string error) => new(default, false, error);
+    }
+}
+EOF
+
+    # CreateSampleCommand.cs
+    cat <<EOF > src/Application/Features/SampleFeature/CreateSampleCommand.cs
+using $PROJECT_NAME.Application.Abstractions.Messaging;
+
+namespace $PROJECT_NAME.Application.Features.SampleFeature
+{
+    public record CreateSampleCommand(string Name) : ICommand<int>;
+}
+EOF
+
+    # CreateSampleCommandHandler.cs
+    cat <<EOF > src/Application/Features/SampleFeature/CreateSampleCommandHandler.cs
+using $PROJECT_NAME.Application.Abstractions.Messaging;
+using $PROJECT_NAME.Application.Common;
+
+namespace $PROJECT_NAME.Application.Features.SampleFeature
+{
+    public sealed class CreateSampleCommandHandler : ICommandHandler<CreateSampleCommand, int>
+    {
+        public async Task<Result<int>> Handle(CreateSampleCommand request, CancellationToken cancellationToken)
+        {
+            // TODO: Criar a entidade e salvar no banco de dados
+            return Result<int>.Success(1);
+        }
+    }
+}
+EOF
+
+    # GetSampleQuery.cs
+    cat <<EOF > src/Application/Features/SampleFeature/GetSampleQuery.cs
+using $PROJECT_NAME.Application.Abstractions.Messaging;
+
+namespace $PROJECT_NAME.Application.Features.SampleFeature
+{
+    public record GetSampleQuery(int Id) : IQuery<string>;
+}
+EOF
+
+    # GetSampleQueryHandler.cs
+    cat <<EOF > src/Application/Features/SampleFeature/GetSampleQueryHandler.cs
+using $PROJECT_NAME.Application.Abstractions.Messaging;
+using $PROJECT_NAME.Application.Common;
+
+namespace $PROJECT_NAME.Application.Features.SampleFeature
+{
+    public sealed class GetSampleQueryHandler : IQueryHandler<GetSampleQuery, string>
+    {
+        public async Task<Result<string>> Handle(GetSampleQuery request, CancellationToken cancellationToken)
+        {
+            // TODO: Buscar do banco de dados
+            return Result<string>.Success("Sample Data");
+        }
+    }
+}
+EOF
+  fi
+}
+
+generate_observability() {
+  if [ "$OBSERVABILITY" == "yes" ]; then
+    echo ""
+    echo "🏢 Configurando Observability..."
+
+    # Só gera Program.cs se Pipeline NÃO estiver ativo (Pipeline gera seu próprio Program.cs combinado)
+    if [ "$PIPELINE" != "yes" ]; then
+      generate_program_cs_observability
+    fi
+
+    generate_docker_compose
+    generate_prometheus_config
+  fi
+}
+
+generate_program_cs_observability() {
+  echo ""
+  echo "📝 Configurando OpenTelemetry no Program.cs..."
+
+  cat <<EOF > src/WebApi/Program.cs
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// Add services to the container.
+builder.Services.AddControllers();
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+
+// OpenTelemetry Metrics
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(resource =>
+        resource.AddService("$PROJECT_NAME.WebApi"))
+    .WithMetrics(metrics =>
+    {
+        metrics.AddAspNetCoreInstrumentation();
+        metrics.AddHttpClientInstrumentation();
+        metrics.AddRuntimeInstrumentation();
+        metrics.AddPrometheusExporter();
+    });
+
+var app = builder.Build();
+
+// Configure the HTTP request pipeline.
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
+
+app.UseHttpsRedirection();
+app.UseAuthorization();
+app.MapControllers();
+
+// Prometheus scraping endpoint: /metrics
+app.UseOpenTelemetryPrometheusScrapingEndpoint();
+
+app.Run();
+EOF
+}
+
+generate_docker_compose() {
+  echo ""
+  echo "🐳 Criando docker-compose.yml com Prometheus e Grafana..."
+
+  cat <<EOF > docker-compose.yml
+version: '3.9'
+
+services:
+
+  api:
+    build:
+      context: .
+      dockerfile: src/WebApi/Dockerfile
+    ports:
+      - "5000:80"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:80
+
+  prometheus:
+    image: prom/prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    depends_on:
+      - api
+
+  grafana:
+    image: grafana/grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    depends_on:
+      - prometheus
+EOF
+}
+
+generate_prometheus_config() {
+  echo ""
+  echo "📄 Criando prometheus.yml..."
+
+  cat <<EOF > prometheus.yml
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: '$PROJECT_NAME-api'
+    static_configs:
+      - targets: ['api:80']
+EOF
+}
+
+generate_pipeline_behaviors() {
+  if [ "$PIPELINE" == "yes" ]; then
+    echo ""
+    echo "🧠 Configurando PIPELINE ENTERPRISE..."
+
+    mkdir -p src/Application/Behaviors
+
+    cat <<EOF > src/Application/Behaviors/CorrelationBehavior.cs
+using MediatR;
+using Microsoft.Extensions.Logging;
+
+namespace $PROJECT_NAME.Application.Behaviors;
+
+public sealed class CorrelationBehavior<TRequest, TResponse>
+    : IPipelineBehavior<TRequest, TResponse>
+    where TRequest : notnull
+{
+    private readonly ILogger<CorrelationBehavior<TRequest, TResponse>> _logger;
+
+    public CorrelationBehavior(
+        ILogger<CorrelationBehavior<TRequest, TResponse>> logger)
+    {
+        _logger = logger;
+    }
+
+    public async Task<TResponse> Handle(
+        TRequest request,
+        RequestHandlerDelegate<TResponse> next,
+        CancellationToken cancellationToken)
+    {
+        var correlationId = Guid.NewGuid();
+
+        using (_logger.BeginScope(new Dictionary<string, object>
+        {
+            ["CorrelationId"] = correlationId
+        }))
+        {
+            return await next();
+        }
+    }
+}
+EOF
+
+    cat <<EOF > src/Application/Behaviors/ValidationBehavior.cs
+using FluentValidation;
+using MediatR;
+
+namespace $PROJECT_NAME.Application.Behaviors;
+
+public sealed class ValidationBehavior<TRequest, TResponse>
+    : IPipelineBehavior<TRequest, TResponse>
+    where TRequest : notnull
+{
+    private readonly IEnumerable<IValidator<TRequest>> _validators;
+
+    public ValidationBehavior(IEnumerable<IValidator<TRequest>> validators)
+    {
+        _validators = validators;
+    }
+
+    public async Task<TResponse> Handle(
+        TRequest request,
+        RequestHandlerDelegate<TResponse> next,
+        CancellationToken cancellationToken)
+    {
+        if (_validators.Any())
+        {
+            var context = new ValidationContext<TRequest>(request);
+
+            var failures = _validators
+                .Select(v => v.Validate(context))
+                .SelectMany(r => r.Errors)
+                .Where(f => f != null)
+                .ToList();
+
+            if (failures.Count != 0)
+                throw new ValidationException(failures);
+        }
+
+        return await next();
+    }
+}
+EOF
+
+    cat <<EOF > src/Application/Behaviors/ExceptionHandlingBehavior.cs
+using MediatR;
+using Microsoft.Extensions.Logging;
+
+namespace $PROJECT_NAME.Application.Behaviors;
+
+public sealed class ExceptionHandlingBehavior<TRequest, TResponse>
+    : IPipelineBehavior<TRequest, TResponse>
+    where TRequest : notnull
+{
+    private readonly ILogger<ExceptionHandlingBehavior<TRequest, TResponse>> _logger;
+
+    public ExceptionHandlingBehavior(
+        ILogger<ExceptionHandlingBehavior<TRequest, TResponse>> logger)
+    {
+        _logger = logger;
+    }
+
+    public async Task<TResponse> Handle(
+        TRequest request,
+        RequestHandlerDelegate<TResponse> next,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await next();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Unhandled Exception for {RequestName}",
+                typeof(TRequest).Name);
+
+            throw;
+        }
+    }
+}
+EOF
+
+    cat <<EOF > src/Application/Behaviors/LoggingBehavior.cs
+using MediatR;
+using Microsoft.Extensions.Logging;
+using System.Diagnostics;
+
+namespace $PROJECT_NAME.Application.Behaviors;
+
+public sealed class LoggingBehavior<TRequest, TResponse>
+    : IPipelineBehavior<TRequest, TResponse>
+    where TRequest : notnull
+{
+    private readonly ILogger<LoggingBehavior<TRequest, TResponse>> _logger;
+
+    public LoggingBehavior(ILogger<LoggingBehavior<TRequest, TResponse>> logger)
+    {
+        _logger = logger;
+    }
+
+    public async Task<TResponse> Handle(
+        TRequest request,
+        RequestHandlerDelegate<TResponse> next,
+        CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Handling {RequestName}", typeof(TRequest).Name);
+
+        var stopwatch = Stopwatch.StartNew();
+        var response = await next();
+        stopwatch.Stop();
+
+        _logger.LogInformation("Handled {RequestName} in {ElapsedMilliseconds} ms", typeof(TRequest).Name, stopwatch.ElapsedMilliseconds);
+
+        return response;
+    }
+}
+EOF
+
+    cat <<EOF > src/Application/Behaviors/PerformanceBehavior.cs
+using MediatR;
+using Microsoft.Extensions.Logging;
+using System.Diagnostics;
+
+namespace $PROJECT_NAME.Application.Behaviors;
+
+public sealed class PerformanceBehavior<TRequest, TResponse>
+    : IPipelineBehavior<TRequest, TResponse>
+    where TRequest : notnull
+{
+    private readonly ILogger<PerformanceBehavior<TRequest, TResponse>> _logger;
+
+    public PerformanceBehavior(ILogger<PerformanceBehavior<TRequest, TResponse>> logger)
+    {
+        _logger = logger;
+    }
+
+    public async Task<TResponse> Handle(
+        TRequest request,
+        RequestHandlerDelegate<TResponse> next,
+        CancellationToken cancellationToken)
+    {
+        var stopwatch = Stopwatch.StartNew();
+
+        var response = await next();
+
+        stopwatch.Stop();
+
+        if (stopwatch.ElapsedMilliseconds > 500)
+        {
+            _logger.LogWarning("Long Running Request: {Name} ({ElapsedMilliseconds} milliseconds) {@Request}",
+                typeof(TRequest).Name, stopwatch.ElapsedMilliseconds, request);
+        }
+
+        return response;
+    }
+}
+EOF
+
+    cat <<EOF > src/Application/DependencyInjection.cs
+using FluentValidation;
+using MediatR;
+using Microsoft.Extensions.DependencyInjection;
+using System.Reflection;
+
+namespace $PROJECT_NAME.Application;
+
+public static class DependencyInjection
+{
+    public static IServiceCollection AddApplication(
+        this IServiceCollection services)
+    {
+        services.AddMediatR(cfg =>
+        {
+            cfg.RegisterServicesFromAssembly(
+                Assembly.GetExecutingAssembly());
+
+            cfg.AddOpenBehavior(typeof(
+                Behaviors.CorrelationBehavior<,>));
+
+            cfg.AddOpenBehavior(typeof(
+                Behaviors.LoggingBehavior<,>));
+
+            cfg.AddOpenBehavior(typeof(
+                Behaviors.ValidationBehavior<,>));
+
+            cfg.AddOpenBehavior(typeof(
+                Behaviors.PerformanceBehavior<,>));
+
+            cfg.AddOpenBehavior(typeof(
+                Behaviors.ExceptionHandlingBehavior<,>));
+        });
+
+        services.AddValidatorsFromAssembly(
+            Assembly.GetExecutingAssembly());
+
+        return services;
+    }
+}
+EOF
+
+    if [ "$OBSERVABILITY" == "yes" ]; then
+      # Program.cs com Pipeline + Observability (Prometheus + Grafana)
+      cat <<EOF > src/WebApi/Program.cs
+using Serilog;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
+using $PROJECT_NAME.Application;
+
+Log.Logger = new LoggerConfiguration()
+    .Enrich.FromLogContext()
+    .WriteTo.Console()
+    .CreateLogger();
+
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Host.UseSerilog();
+
+builder.Services.AddApplication();
+
+// OpenTelemetry - Tracing + Metrics (Prometheus)
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(resource =>
+        resource.AddService("$PROJECT_NAME.WebApi"))
+    .WithTracing(tracing =>
+    {
+        tracing.AddAspNetCoreInstrumentation();
+        tracing.AddConsoleExporter();
+    })
+    .WithMetrics(metrics =>
+    {
+        metrics.AddAspNetCoreInstrumentation();
+        metrics.AddHttpClientInstrumentation();
+        metrics.AddRuntimeInstrumentation();
+        metrics.AddPrometheusExporter();
+    });
+
+builder.Services.AddControllers();
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+
+var app = builder.Build();
+
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
+
+app.UseHttpsRedirection();
+app.UseAuthorization();
+app.MapControllers();
+
+// Prometheus scraping endpoint: /metrics
+app.UseOpenTelemetryPrometheusScrapingEndpoint();
+
+app.Run();
+EOF
+
+    else
+      # Program.cs com Pipeline apenas (sem Observability)
+      cat <<EOF > src/WebApi/Program.cs
+using Serilog;
+using OpenTelemetry.Trace;
+using $PROJECT_NAME.Application;
+
+Log.Logger = new LoggerConfiguration()
+    .Enrich.FromLogContext()
+    .WriteTo.Console()
+    .CreateLogger();
+
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Host.UseSerilog();
+
+builder.Services.AddApplication();
+
+builder.Services.AddOpenTelemetry()
+    .WithTracing(tracing =>
+    {
+        tracing.AddAspNetCoreInstrumentation();
+        tracing.AddConsoleExporter();
+    });
+
+builder.Services.AddControllers();
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+
+var app = builder.Build();
+
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
+
+app.UseHttpsRedirection();
+app.UseAuthorization();
+app.MapControllers();
+
+app.Run();
+EOF
+
+    fi
+
+  fi
+}
