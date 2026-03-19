@@ -12,13 +12,14 @@ install_packages() {
 
   run "dotnet add src/Infrastructure/$PROJECT_NAME.Infrastructure.csproj package Microsoft.EntityFrameworkCore --version 8.0.0"
 
+  if [ "$CQRS" == "yes" ] || [ "$PIPELINE" == "yes" ]; then
+    run "dotnet add src/Application/$PROJECT_NAME.Application.csproj package MediatR"
+  fi
+
   if [ "$AUTH" == "jwt" ]; then
     run "dotnet add src/WebApi/$PROJECT_NAME.WebApi.csproj package Microsoft.AspNetCore.Authentication.JwtBearer --version 8.0.0"
   fi
 
-  if [ "$CQRS" == "yes" ]; then
-    run "dotnet add src/Application/$PROJECT_NAME.Application.csproj package MediatR"
-  fi
 
   if [ "$PIPELINE" == "yes" ]; then
     echo ""

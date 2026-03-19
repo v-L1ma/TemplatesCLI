@@ -33,7 +33,12 @@ install_packages
 generate_dbcontext
 generate_repository_base
 generate_dockerfile
+generate_unit_of_work
 generate_cqrs
+generate_exception_handler
+generate_mediatr_di
+generate_infrastructure_di
+generate_program_cs_base
 generate_observability
 generate_pipeline_behaviors
 

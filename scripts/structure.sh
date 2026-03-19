@@ -43,4 +43,5 @@ setup_references() {
   run "dotnet add src/Infrastructure/$PROJECT_NAME.Infrastructure.csproj reference src/Domain/$PROJECT_NAME.Domain.csproj"
 
   run "dotnet add src/WebApi/$PROJECT_NAME.WebApi.csproj reference src/Application/$PROJECT_NAME.Application.csproj"
+  run "dotnet add src/WebApi/$PROJECT_NAME.WebApi.csproj reference src/Infrastructure/$PROJECT_NAME.Infrastructure.csproj"
 }

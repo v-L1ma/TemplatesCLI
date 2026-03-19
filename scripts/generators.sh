@@ -86,21 +86,19 @@ generate_cqrs() {
     echo "🏗️ Criando estrutura CQRS..."
 
     mkdir -p src/Application/Abstractions/Messaging
-    mkdir -p src/Application/Common
     mkdir -p src/Application/Features/SampleFeature
 
     # ICommand.cs
     cat <<EOF > src/Application/Abstractions/Messaging/ICommand.cs
 using MediatR;
-using $PROJECT_NAME.Application.Common;
 
 namespace $PROJECT_NAME.Application.Abstractions.Messaging
 {
-    public interface ICommand : IRequest<Result>
+    public interface ICommand : IRequest
     {
     }
 
-    public interface ICommand<TResponse> : IRequest<Result<TResponse>>
+    public interface ICommand<TResponse> : IRequest<TResponse>
     {
     }
 }
@@ -109,11 +107,10 @@ EOF
     # IQuery.cs
     cat <<EOF > src/Application/Abstractions/Messaging/IQuery.cs
 using MediatR;
-using $PROJECT_NAME.Application.Common;
 
 namespace $PROJECT_NAME.Application.Abstractions.Messaging
 {
-    public interface IQuery<TResponse> : IRequest<Result<TResponse>>
+    public interface IQuery<TResponse> : IRequest<TResponse>
     {
     }
 }
@@ -122,16 +119,15 @@ EOF
     # ICommandHandler.cs
     cat <<EOF > src/Application/Abstractions/Messaging/ICommandHandler.cs
 using MediatR;
-using $PROJECT_NAME.Application.Common;
 
 namespace $PROJECT_NAME.Application.Abstractions.Messaging
 {
-    public interface ICommandHandler<TCommand> : IRequestHandler<TCommand, Result>
+    public interface ICommandHandler<TCommand> : IRequestHandler<TCommand>
         where TCommand : ICommand
     {
     }
 
-    public interface ICommandHandler<TCommand, TResponse> : IRequestHandler<TCommand, Result<TResponse>>
+    public interface ICommandHandler<TCommand, TResponse> : IRequestHandler<TCommand, TResponse>
         where TCommand : ICommand<TResponse>
     {
     }
@@ -141,54 +137,12 @@ EOF
     # IQueryHandler.cs
     cat <<EOF > src/Application/Abstractions/Messaging/IQueryHandler.cs
 using MediatR;
-using $PROJECT_NAME.Application.Common;
 
 namespace $PROJECT_NAME.Application.Abstractions.Messaging
 {
-    public interface IQueryHandler<TQuery, TResponse> : IRequestHandler<TQuery, Result<TResponse>>
+    public interface IQueryHandler<TQuery, TResponse> : IRequestHandler<TQuery, TResponse>
         where TQuery : IQuery<TResponse>
     {
-    }
-}
-EOF
-
-    # Result.cs
-    cat <<EOF > src/Application/Common/Result.cs
-namespace $PROJECT_NAME.Application.Common
-{
-    public class Result
-    {
-        public bool IsSuccess { get; }
-        public bool IsFailure => !IsSuccess;
-        public string Error { get; }
-
-        protected Result(bool isSuccess, string error)
-        {
-            if (isSuccess && error != string.Empty)
-                throw new InvalidOperationException();
-            if (!isSuccess && error == string.Empty)
-                throw new InvalidOperationException();
-
-            IsSuccess = isSuccess;
-            Error = error;
-        }
-
-        public static Result Success() => new(true, string.Empty);
-        public static Result Failure(string error) => new(false, error);
-    }
-
-    public class Result<TValue> : Result
-    {
-        public TValue? Value { get; }
-
-        protected internal Result(TValue? value, bool isSuccess, string error)
-            : base(isSuccess, error)
-        {
-            Value = value;
-        }
-
-        public static Result<TValue> Success(TValue value) => new(value, true, string.Empty);
-        public static new Result<TValue> Failure(string error) => new(default, false, error);
     }
 }
 EOF
@@ -206,16 +160,15 @@ EOF
     # CreateSampleCommandHandler.cs
     cat <<EOF > src/Application/Features/SampleFeature/CreateSampleCommandHandler.cs
 using $PROJECT_NAME.Application.Abstractions.Messaging;
-using $PROJECT_NAME.Application.Common;
 
 namespace $PROJECT_NAME.Application.Features.SampleFeature
 {
     public sealed class CreateSampleCommandHandler : ICommandHandler<CreateSampleCommand, int>
     {
-        public async Task<Result<int>> Handle(CreateSampleCommand request, CancellationToken cancellationToken)
+        public async Task<int> Handle(CreateSampleCommand request, CancellationToken cancellationToken)
         {
             // TODO: Criar a entidade e salvar no banco de dados
-            return Result<int>.Success(1);
+            return 1;
         }
     }
 }
@@ -234,16 +187,15 @@ EOF
     # GetSampleQueryHandler.cs
     cat <<EOF > src/Application/Features/SampleFeature/GetSampleQueryHandler.cs
 using $PROJECT_NAME.Application.Abstractions.Messaging;
-using $PROJECT_NAME.Application.Common;
 
 namespace $PROJECT_NAME.Application.Features.SampleFeature
 {
     public sealed class GetSampleQueryHandler : IQueryHandler<GetSampleQuery, string>
     {
-        public async Task<Result<string>> Handle(GetSampleQuery request, CancellationToken cancellationToken)
+        public async Task<string> Handle(GetSampleQuery request, CancellationToken cancellationToken)
         {
             // TODO: Buscar do banco de dados
-            return Result<string>.Success("Sample Data");
+            return "Sample Data";
         }
     }
 }
@@ -270,13 +222,21 @@ generate_program_cs_observability() {
   echo ""
   echo "📝 Configurando OpenTelemetry no Program.cs..."
 
-  cat <<EOF > src/WebApi/Program.cs
+  if [ "$CQRS" == "yes" ]; then
+    cat <<EOF > src/WebApi/Program.cs
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
+using $PROJECT_NAME.Application;
+using $PROJECT_NAME.Infrastructure;
+using $PROJECT_NAME.WebApi.Infrastructure;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
+builder.Services.AddApplication();
+builder.Services.AddInfrastructure(builder.Configuration);
+builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
+builder.Services.AddProblemDetails();
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
@@ -295,6 +255,8 @@ builder.Services.AddOpenTelemetry()
 
 var app = builder.Build();
 
+app.UseExceptionHandler();
+
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
@@ -311,6 +273,56 @@ app.UseOpenTelemetryPrometheusScrapingEndpoint();
 
 app.Run();
 EOF
+  else
+    cat <<EOF > src/WebApi/Program.cs
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+using $PROJECT_NAME.Infrastructure;
+using $PROJECT_NAME.WebApi.Infrastructure;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// Add services to the container.
+builder.Services.AddInfrastructure(builder.Configuration);
+builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
+builder.Services.AddProblemDetails();
+builder.Services.AddControllers();
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+
+// OpenTelemetry Metrics
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(resource =>
+        resource.AddService("$PROJECT_NAME.WebApi"))
+    .WithMetrics(metrics =>
+    {
+        metrics.AddAspNetCoreInstrumentation();
+        metrics.AddHttpClientInstrumentation();
+        metrics.AddRuntimeInstrumentation();
+        metrics.AddPrometheusExporter();
+    });
+
+var app = builder.Build();
+
+app.UseExceptionHandler();
+
+// Configure the HTTP request pipeline.
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
+
+app.UseHttpsRedirection();
+app.UseAuthorization();
+app.MapControllers();
+
+// Prometheus scraping endpoint: /metrics
+app.UseOpenTelemetryPrometheusScrapingEndpoint();
+
+app.Run();
+EOF
+  fi
 }
 
 generate_docker_compose() {
@@ -610,12 +622,14 @@ EOF
 
     if [ "$OBSERVABILITY" == "yes" ]; then
       # Program.cs com Pipeline + Observability (Prometheus + Grafana)
-      cat <<EOF > src/WebApi/Program.cs
+    cat <<EOF > src/WebApi/Program.cs
 using Serilog;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using $PROJECT_NAME.Application;
+using $PROJECT_NAME.Infrastructure;
+using $PROJECT_NAME.WebApi.Infrastructure;
 
 Log.Logger = new LoggerConfiguration()
     .Enrich.FromLogContext()
@@ -627,6 +641,9 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Host.UseSerilog();
 
 builder.Services.AddApplication();
+builder.Services.AddInfrastructure(builder.Configuration);
+builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
+builder.Services.AddProblemDetails();
 
 // OpenTelemetry - Tracing + Metrics (Prometheus)
 builder.Services.AddOpenTelemetry()
@@ -651,6 +668,8 @@ builder.Services.AddSwaggerGen();
 
 var app = builder.Build();
 
+app.UseExceptionHandler();
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -669,10 +688,12 @@ EOF
 
     else
       # Program.cs com Pipeline apenas (sem Observability)
-      cat <<EOF > src/WebApi/Program.cs
+    cat <<EOF > src/WebApi/Program.cs
 using Serilog;
 using OpenTelemetry.Trace;
 using $PROJECT_NAME.Application;
+using $PROJECT_NAME.Infrastructure;
+using $PROJECT_NAME.WebApi.Infrastructure;
 
 Log.Logger = new LoggerConfiguration()
     .Enrich.FromLogContext()
@@ -684,6 +705,9 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Host.UseSerilog();
 
 builder.Services.AddApplication();
+builder.Services.AddInfrastructure(builder.Configuration);
+builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
+builder.Services.AddProblemDetails();
 
 builder.Services.AddOpenTelemetry()
     .WithTracing(tracing =>
@@ -697,6 +721,8 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 var app = builder.Build();
+
+app.UseExceptionHandler();
 
 if (app.Environment.IsDevelopment())
 {
@@ -715,3 +741,346 @@ EOF
 
   fi
 }
+
+generate_unit_of_work() {
+  echo ""
+  echo "📝 Criando Unit of Work..."
+
+  mkdir -p src/Application/Repositories
+  mkdir -p src/Infrastructure/Repositories
+
+  # IUnitOfWork.cs
+  cat <<EOF2 > src/Application/Repositories/IUnitOfWork.cs
+namespace $PROJECT_NAME.Application.Repositories
+{
+    public interface IUnitOfWork
+    {
+        Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
+        Task BeginTransactionAsync(CancellationToken cancellationToken = default);
+        Task CommitAsync(CancellationToken cancellationToken = default);
+        Task RollbackAsync(CancellationToken cancellationToken = default);
+        IRepositoryBase<T> GetRepository<T>() where T : class;
+    }
+}
+EOF2
+
+  # UnitOfWork.cs
+    cat <<EOF2 > src/Infrastructure/Repositories/UnitOfWork.cs
+using $PROJECT_NAME.Application.Repositories;
+using $PROJECT_NAME.Infrastructure;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
+
+namespace $PROJECT_NAME.Infrastructure.Repositories
+{
+    public sealed class UnitOfWork : IUnitOfWork
+    {
+        private readonly AppDbContext _dbContext;
+        private readonly Dictionary<Type, object> _repositories = new();
+        private IDbContextTransaction? _currentTransaction;
+
+        public UnitOfWork(AppDbContext dbContext)
+        {
+            _dbContext = dbContext;
+        }
+
+        public Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+        {
+            return _dbContext.SaveChangesAsync(cancellationToken);
+        }
+
+        public async Task BeginTransactionAsync(CancellationToken cancellationToken = default)
+        {
+            if (_currentTransaction != null)
+            {
+                return;
+            }
+
+            _currentTransaction = await _dbContext.Database
+                .BeginTransactionAsync(cancellationToken);
+        }
+
+        public async Task CommitAsync(CancellationToken cancellationToken = default)
+        {
+            if (_currentTransaction == null)
+            {
+                return;
+            }
+
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            await _currentTransaction.CommitAsync(cancellationToken);
+            await _currentTransaction.DisposeAsync();
+            _currentTransaction = null;
+        }
+
+        public async Task RollbackAsync(CancellationToken cancellationToken = default)
+        {
+            if (_currentTransaction == null)
+            {
+                return;
+            }
+
+            await _currentTransaction.RollbackAsync(cancellationToken);
+            await _currentTransaction.DisposeAsync();
+            _currentTransaction = null;
+        }
+
+        public IRepositoryBase<T> GetRepository<T>() where T : class
+        {
+            var type = typeof(T);
+
+            if (_repositories.TryGetValue(type, out var repository))
+            {
+                return (IRepositoryBase<T>)repository;
+            }
+
+            var newRepository = new RepositoryBase<T>(_dbContext);
+            _repositories[type] = newRepository;
+            return newRepository;
+        }
+    }
+
+    internal sealed class RepositoryBase<T> : IRepositoryBase<T> where T : class
+    {
+        private readonly AppDbContext _dbContext;
+        private readonly DbSet<T> _dbSet;
+
+        public RepositoryBase(AppDbContext dbContext)
+        {
+            _dbContext = dbContext;
+            _dbSet = dbContext.Set<T>();
+        }
+
+        public Task<T> GetByIdAsync(int id)
+        {
+            return _dbSet.FindAsync(id).AsTask();
+        }
+
+        public async Task<IEnumerable<T>> GetAllAsync()
+        {
+            return await _dbSet.ToListAsync();
+        }
+
+        public async Task<bool> ExistsAsync(int id)
+        {
+            return await _dbSet.FindAsync(id) != null;
+        }
+
+        public Task AddAsync(T entity)
+        {
+            return _dbSet.AddAsync(entity).AsTask();
+        }
+
+        public Task UpdateAsync(T entity)
+        {
+            _dbSet.Update(entity);
+            return Task.CompletedTask;
+        }
+
+        public Task DeleteAsync(T entity)
+        {
+            _dbSet.Remove(entity);
+            return Task.CompletedTask;
+        }
+
+        public Task SaveChangesAsync()
+        {
+            return _dbContext.SaveChangesAsync();
+        }
+    }
+}
+EOF2
+}
+
+generate_exception_handler() {
+  echo ""
+  echo "🛡️ Criando Exception Handler..."
+
+  mkdir -p src/WebApi/Infrastructure
+
+  # GlobalExceptionHandler.cs
+  cat <<EOF2 > src/WebApi/Infrastructure/GlobalExceptionHandler.cs
+using Microsoft.AspNetCore.Diagnostics;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
+
+namespace $PROJECT_NAME.WebApi.Infrastructure
+{
+    public sealed class GlobalExceptionHandler : IExceptionHandler
+    {
+        private readonly ILogger<GlobalExceptionHandler> _logger;
+
+        public GlobalExceptionHandler(ILogger<GlobalExceptionHandler> logger)
+        {
+            _logger = logger;
+        }
+
+        public async ValueTask<bool> TryHandleAsync(
+            HttpContext httpContext,
+            Exception exception,
+            CancellationToken cancellationToken)
+        {
+            _logger.LogError(exception, "Exception occurred: {Message}", exception.Message);
+
+            var problemDetails = new ProblemDetails
+            {
+                Status = StatusCodes.Status500InternalServerError,
+                Title = "Server error",
+                Detail = exception.Message
+            };
+
+            httpContext.Response.StatusCode = problemDetails.Status.Value;
+            await httpContext.Response.WriteAsJsonAsync(problemDetails, cancellationToken);
+
+            return true;
+        }
+    }
+}
+EOF2
+}
+
+generate_mediatr_di() {
+    if [ "$CQRS" == "yes" ] && [ "$PIPELINE" != "yes" ]; then
+        echo ""
+        echo "🧩 Configurando MediatR..."
+
+        cat <<EOF2 > src/Application/DependencyInjection.cs
+using MediatR;
+using Microsoft.Extensions.DependencyInjection;
+using System.Reflection;
+
+namespace $PROJECT_NAME.Application;
+
+public static class DependencyInjection
+{
+        public static IServiceCollection AddApplication(
+                this IServiceCollection services)
+        {
+                services.AddMediatR(cfg =>
+                {
+                        cfg.RegisterServicesFromAssembly(
+                                Assembly.GetExecutingAssembly());
+                });
+
+                return services;
+        }
+}
+EOF2
+    fi
+}
+
+generate_infrastructure_di() {
+    echo ""
+    echo "🔌 Configurando Infrastructure DI..."
+
+    local provider_line=""
+
+    if [ "$DATABASE" == "sqlserver" ]; then
+        provider_line="options.UseSqlServer(connectionString);"
+    else
+        provider_line="options.UseNpgsql(connectionString);"
+    fi
+
+    cat <<EOF2 > src/Infrastructure/DependencyInjection.cs
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using $PROJECT_NAME.Application.Repositories;
+
+namespace $PROJECT_NAME.Infrastructure;
+
+public static class DependencyInjection
+{
+        public static IServiceCollection AddInfrastructure(
+                this IServiceCollection services,
+                IConfiguration configuration)
+        {
+                var connectionString = configuration.GetConnectionString("DefaultConnection");
+
+                services.AddDbContext<AppDbContext>(options =>
+                {
+                        $provider_line
+                });
+
+                services.AddScoped<IUnitOfWork, Repositories.UnitOfWork>();
+
+                return services;
+        }
+}
+EOF2
+}
+
+generate_program_cs_base() {
+    if [ "$PIPELINE" != "yes" ] && [ "$OBSERVABILITY" != "yes" ]; then
+        echo ""
+        echo "📝 Configurando Program.cs..."
+
+        if [ "$CQRS" == "yes" ]; then
+            cat <<EOF2 > src/WebApi/Program.cs
+using $PROJECT_NAME.Application;
+using $PROJECT_NAME.Infrastructure;
+using $PROJECT_NAME.WebApi.Infrastructure;
+
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddApplication();
+builder.Services.AddInfrastructure(builder.Configuration);
+builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
+builder.Services.AddProblemDetails();
+
+builder.Services.AddControllers();
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+
+var app = builder.Build();
+
+app.UseExceptionHandler();
+
+if (app.Environment.IsDevelopment())
+{
+        app.UseSwagger();
+        app.UseSwaggerUI();
+}
+
+app.UseHttpsRedirection();
+app.UseAuthorization();
+app.MapControllers();
+
+app.Run();
+EOF2
+        else
+            cat <<EOF2 > src/WebApi/Program.cs
+using $PROJECT_NAME.Infrastructure;
+using $PROJECT_NAME.WebApi.Infrastructure;
+
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddInfrastructure(builder.Configuration);
+builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
+builder.Services.AddProblemDetails();
+
+builder.Services.AddControllers();
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+
+var app = builder.Build();
+
+app.UseExceptionHandler();
+
+if (app.Environment.IsDevelopment())
+{
+        app.UseSwagger();
+        app.UseSwaggerUI();
+}
+
+app.UseHttpsRedirection();
+app.UseAuthorization();
+app.MapControllers();
+
+app.Run();
+EOF2
+        fi
+    fi
+}
+
