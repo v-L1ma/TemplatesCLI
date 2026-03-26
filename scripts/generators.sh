@@ -91,14 +91,15 @@ generate_cqrs() {
     # ICommand.cs
     cat <<EOF > src/Application/Abstractions/Messaging/ICommand.cs
 using MediatR;
+using $PROJECT_NAME.Domain.Abstractions;
 
 namespace $PROJECT_NAME.Application.Abstractions.Messaging
 {
-    public interface ICommand : IRequest
+    public interface ICommand : IRequest<Result>
     {
     }
 
-    public interface ICommand<TResponse> : IRequest<TResponse>
+    public interface ICommand<TResponse> : IRequest<Result<TResponse>>
     {
     }
 }
@@ -107,10 +108,11 @@ EOF
     # IQuery.cs
     cat <<EOF > src/Application/Abstractions/Messaging/IQuery.cs
 using MediatR;
+using $PROJECT_NAME.Domain.Abstractions;
 
 namespace $PROJECT_NAME.Application.Abstractions.Messaging
 {
-    public interface IQuery<TResponse> : IRequest<TResponse>
+    public interface IQuery<TResponse> : IRequest<Result<TResponse>>
     {
     }
 }
@@ -119,15 +121,16 @@ EOF
     # ICommandHandler.cs
     cat <<EOF > src/Application/Abstractions/Messaging/ICommandHandler.cs
 using MediatR;
+using $PROJECT_NAME.Domain.Abstractions;
 
 namespace $PROJECT_NAME.Application.Abstractions.Messaging
 {
-    public interface ICommandHandler<TCommand> : IRequestHandler<TCommand>
+    public interface ICommandHandler<TCommand> : IRequestHandler<TCommand, Result>
         where TCommand : ICommand
     {
     }
 
-    public interface ICommandHandler<TCommand, TResponse> : IRequestHandler<TCommand, TResponse>
+    public interface ICommandHandler<TCommand, TResponse> : IRequestHandler<TCommand, Result<TResponse>>
         where TCommand : ICommand<TResponse>
     {
     }
@@ -137,10 +140,11 @@ EOF
     # IQueryHandler.cs
     cat <<EOF > src/Application/Abstractions/Messaging/IQueryHandler.cs
 using MediatR;
+using $PROJECT_NAME.Domain.Abstractions;
 
 namespace $PROJECT_NAME.Application.Abstractions.Messaging
 {
-    public interface IQueryHandler<TQuery, TResponse> : IRequestHandler<TQuery, TResponse>
+    public interface IQueryHandler<TQuery, TResponse> : IRequestHandler<TQuery, Result<TResponse>>
         where TQuery : IQuery<TResponse>
     {
     }
@@ -160,15 +164,16 @@ EOF
     # CreateSampleCommandHandler.cs
     cat <<EOF > src/Application/Features/SampleFeature/CreateSampleCommandHandler.cs
 using $PROJECT_NAME.Application.Abstractions.Messaging;
+using $PROJECT_NAME.Domain.Abstractions;
 
 namespace $PROJECT_NAME.Application.Features.SampleFeature
 {
     public sealed class CreateSampleCommandHandler : ICommandHandler<CreateSampleCommand, int>
     {
-        public async Task<int> Handle(CreateSampleCommand request, CancellationToken cancellationToken)
+        public async Task<Result<int>> Handle(CreateSampleCommand request, CancellationToken cancellationToken)
         {
             // TODO: Criar a entidade e salvar no banco de dados
-            return 1;
+            return Result.Success(1);
         }
     }
 }
@@ -187,15 +192,16 @@ EOF
     # GetSampleQueryHandler.cs
     cat <<EOF > src/Application/Features/SampleFeature/GetSampleQueryHandler.cs
 using $PROJECT_NAME.Application.Abstractions.Messaging;
+using $PROJECT_NAME.Domain.Abstractions;
 
 namespace $PROJECT_NAME.Application.Features.SampleFeature
 {
     public sealed class GetSampleQueryHandler : IQueryHandler<GetSampleQuery, string>
     {
-        public async Task<string> Handle(GetSampleQuery request, CancellationToken cancellationToken)
+        public async Task<Result<string>> Handle(GetSampleQuery request, CancellationToken cancellationToken)
         {
             // TODO: Buscar do banco de dados
-            return "Sample Data";
+            return Result.Success("Sample Data");
         }
     }
 }
@@ -1084,3 +1090,87 @@ EOF2
     fi
 }
 
+generate_result_pattern() {
+  echo ""
+  echo "📦 Criando Result Pattern..."
+
+  mkdir -p src/Domain/Abstractions
+  mkdir -p src/WebApi/Controllers
+
+  cat <<EOF > src/Domain/Abstractions/Error.cs
+namespace \$PROJECT_NAME.Domain.Abstractions
+{
+    public enum ErrorType { NotFound, Validation, Unauthorized, ... }
+
+    public record Error(string Id, ErrorType Type, string Description);
+
+    // Some examples of errors
+    public static class Errors
+    {
+        public static Error AccountNotFound { get; } = new("AccountNotFound", ErrorType.NotFound, "Account not found.");
+        public static Error InsufficientFunds { get; } = new("InsufficientFunds", ErrorType.Validation, "Insufficient balance.");
+    }
+}
+EOF
+
+  cat <<EOF > src/Domain/Abstractions/Result.cs
+namespace \$PROJECT_NAME.Domain.Abstractions
+{
+    public record Result
+    {
+        public bool IsSuccess { get; }
+        public Error? Error { get; }
+
+        protected Result(bool isSuccess, Error? error)
+        {
+            IsSuccess = isSuccess;
+            Error = error;
+        }
+
+        public static Result Success() => new(true, null);
+        public static Result Failure(Error error) => new(false, error ?? throw new ArgumentNullException(nameof(error)));
+
+        public static implicit operator Result(Error error) => Failure(error);
+    }
+
+    public record Result<T> : Result
+    {
+        public T? Value { get; }
+
+        private Result(T value) : base(true, null) => Value = value;
+        private Result(Error error) : base(false, error) { }
+
+        public static implicit operator Result<T>(T value) => new(value);
+
+        public static implicit operator Result<T>(Error error) => new(error);
+    }
+}
+EOF
+
+  cat <<EOF > src/WebApi/Controllers/ApiController.cs
+using MediatR;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using \$PROJECT_NAME.Domain.Abstractions;
+
+namespace \$PROJECT_NAME.WebApi.Controllers
+{
+    [ApiController]
+    public class ApiControllerBase : ControllerBase
+    {
+        protected IActionResult HandleFailure(Result result)
+        {
+            if (result.Error == null)
+                return StatusCode(500, "An unknown error occurred.");
+
+            return result.Error.Type switch
+            {
+                ErrorType.NotFound => NotFound(result.Error.Description),
+                ErrorType.Validation => BadRequest(result.Error.Description),
+                _ => StatusCode(500, result.Error.Description)
+            };
+        }
+    }
+}
+EOF
+}
